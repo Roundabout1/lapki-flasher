@@ -101,6 +101,12 @@ type DeviceIdMessage struct {
 	ID string `json:"deviceID"`
 }
 
+type SettingChangeMessage struct {
+	password     string // должен совпадать с AdminPassword
+	settingName  string // название настройки
+	settingValue any    // значение настройки (нужно самостоятельно приводить к нужному типу)
+}
+
 // типы сообщений (событий)
 const (
 	// запрос на получение списка всех устройств
@@ -149,6 +155,8 @@ const (
 	MSGetAddressMsg = "ms-get-address"
 	// передача адреса из МС-ТЮК клиенту
 	MSAddressMsg = "ms-address"
+	// запрос на изменение настройки загрузчика
+	SettingChangeMsg = "setting-change"
 )
 
 // отправить клиенту список всех устройств
@@ -682,4 +690,14 @@ func msDeviceMessageMakeSync(deviceID string, board *BoardFlashAndSerial) *MSDev
 		PortNames: board.getPorts(),
 	}
 	return &devMes
+}
+
+func SettingChange(event Event, c *WebSocketConnection) error {
+	var msg SettingChangeMessage
+	err := json.Unmarshal(event.Payload, &msg)
+	if err != nil {
+		return err
+	}
+	// TODO: блокировка изменения настроек
+	return nil
 }
