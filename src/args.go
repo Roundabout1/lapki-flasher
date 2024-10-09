@@ -245,14 +245,11 @@ func setArgs() {
 			setting.Value = *setting.Value.(*int64)
 		case STRING:
 			setting.Value = *setting.Value.(*string)
-			//_, ok := setting.Value.(*string)
-			//log.Println("test", ok)
 		case BOOL:
 			setting.Value = *setting.Value.(*bool)
 		case DURATION:
 			setting.Value = time.Second * time.Duration(*setting.Value.(*int64))
 		}
-		log.Println(setting.Value)
 		if !setting.Check(setting.Value) {
 			setting.Value = setting.DefaultValue
 		}
