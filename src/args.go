@@ -1,100 +1,279 @@
 package main
 
+// тест:
+// go run . -address=":8081" -avrdudePath="D:\avrdude" -configPath="D:\avrdude" -deviceListPath="device_list.JSON" -adminPassword="1234" -msgSize=1000 -fileSize=1000 -thread=5 -stub=2 -verbose -alwaysUpdate -listCooldown=2 -updateList=5ы
 import (
 	"flag"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 )
 
-// адрес на котором будет работать этот сервер
-var webAddress string
+// тип значения настройки
+type SettingType int
 
-// максмальный размер одного сообщения, передаваемого через веб-сокеты (в байтах)
-var maxMsgSize int
+const (
+	STRING   SettingType = iota
+	INT      SettingType = iota
+	INT64    SettingType = iota
+	BOOL     SettingType = iota
+	DURATION SettingType = iota
+)
 
-// максимальный размер файла, загружаемого на сервер (в байтах)
-var maxFileSize int
+type SettingKey int
 
-// максимальное количество потоков (горутин) на обработку запросов на одного клиента
-var maxThreadsPerClient int
+// индексы массива с настройками, можно добавлять новые в конец, но НЕ СТОИТ менять порядок уже существующих
+const (
+	address SettingKey = iota
+	avrdudePath
+	configPath
+	deviceListPath
+	adminPassword
+	msgSize
+	fileSize
+	thread
+	stub
+	verbose
+	alwaysUpdate
+	listCooldown
+	updateList
+)
 
-/*
-минимальное время, через которое клиент может снова запросить список устройств;
+type Checker func(value any) bool
 
-игнорируется, если количество клиентов меньше чем 2
-*/
-var getListCooldownDuration time.Duration
+type Setting struct {
+	Value        any
+	DefaultValue any
+	Type         SettingType
+	Changable    bool    // можно ли изменить настройку?
+	Check        Checker // валидация значения настройки
+}
 
-// количество времени между автоматическими обновлениями
-var updateListTime time.Duration
+type Settings struct {
+	mu   sync.Mutex
+	Args [13]*Setting
+}
 
-// выводить в консоль подробную информацию
-var verbose bool
+func (settings *Settings) getSettingSync(index SettingKey) *Setting {
+	settings.mu.Lock()
+	defer settings.mu.Unlock()
+	return settings.Args[index]
+}
 
-// всегда искать устройства и обновлять их список, даже когда ни один клиент не подключён (используется для тестирования)
-var alwaysUpdate bool
+func (settings *Settings) setSettingValueSync(index SettingKey, value any) {
+	settings.mu.Lock()
+	defer settings.mu.Unlock()
+	settings.Args[index].Value = value
+}
 
-// количество ненастоящих, симулируемых устройств, которые будут восприниматься как настоящие, применяется для тестирования
-var fakeBoardsNum int
+func (settings *Settings) getAddressSync() string {
+	return settings.getSettingSync(address).Value.(string)
+}
+func (settings *Settings) getAvrdudePathSync() string {
+	return settings.getSettingSync(avrdudePath).Value.(string)
+}
+func (settings *Settings) getConfigPathSync() string {
+	return settings.getSettingSync(configPath).Value.(string)
+}
+func (settings *Settings) getDeviceListPathSync() string {
+	return settings.getSettingSync(deviceListPath).Value.(string)
+}
+func (settings *Settings) getAdminPasswordSync() string {
+	return settings.getSettingSync(adminPassword).Value.(string)
+}
+func (settings *Settings) getMsgSizeSync() int64 {
+	return settings.getSettingSync(msgSize).Value.(int64)
+}
+func (settings *Settings) getFileSizeSync() int {
+	return settings.getSettingSync(fileSize).Value.(int)
+}
+func (settings *Settings) getThreadSync() int {
+	return settings.getSettingSync(thread).Value.(int)
+}
+func (settings *Settings) getStubSync() int {
+	return settings.getSettingSync(stub).Value.(int)
+}
+func (settings *Settings) getVerboseSync() bool {
+	return settings.getSettingSync(verbose).Value.(bool)
+}
+func (settings *Settings) getAlwaysUpdateSync() bool {
+	return settings.getSettingSync(alwaysUpdate).Value.(bool)
+}
+func (settings *Settings) getListCooldownSync() time.Duration {
+	return settings.getSettingSync(listCooldown).Value.(time.Duration)
+}
 
-// путь к avrdude
-var avrdudePath string
+func (settings *Settings) getUpdateListSync() time.Duration {
+	return settings.getSettingSync(updateList).Value.(time.Duration)
+}
 
-// путь к файлу конфигурации (если пустой, то он не будет передаваться через аргументы в avrdude)
-var configPath string
+var SettingsStorage Settings
 
-// путь к файлу со списком устройств (будет использован вместо стандартного списка)
-var deviceListPath string
+func makeSetting(argName string, defaultValue any, argDesc string, setType SettingType, changable bool) *Setting {
+	var value any
+	switch setType {
+	case STRING:
+		value = flag.String(argName, defaultValue.(string), argDesc)
+	case INT:
+		value = flag.Int(argName, defaultValue.(int), argDesc)
+	case INT64, DURATION:
+		value = flag.Int64(argName, defaultValue.(int64), argDesc)
+	case BOOL:
+		value = flag.Bool(argName, defaultValue.(bool), argDesc)
+	}
+	return &Setting{
+		Value:        value,
+		DefaultValue: defaultValue,
+		Type:         setType,
+		Changable:    changable,
+		Check:        func(value any) bool { return true },
+	}
+}
 
-/*
-Пароль, дающий доступ клиенту к особым функциям, таким как изменение настроек загрузчика.
-
-Если пароль пуст, то эти функции заблокированы для всех.
-*/
-var adminPassword string
+func makeSettingWithChecker(argName string, defaultValue any, argDesc string, setType SettingType, changable bool, check Checker) *Setting {
+	setting := makeSetting(argName, defaultValue, argDesc, setType, changable)
+	setting.Check = check
+	return setting
+}
 
 // чтение флагов и происвоение им стандартных значений
 func setArgs() {
-	flag.StringVar(&webAddress, "address", "localhost:8080", "адресс для подключения")
-	flag.StringVar(&avrdudePath, "avrdudePath", "avrdude", "путь к avrdude, используется системный путь по-умолчанию")
-	flag.StringVar(&configPath, "configPath", "", "путь к файлу конфигурации avrdude")
-	flag.StringVar(&deviceListPath, "deviceListPath", "", "путь к JSON-файлу со списком устройств. Если прописан, то заменяет стандартный список устройств, при условии, что не возникнет ошибок, связанных с чтением и открытием JSON-файла, иначе используется стандартный список устройств (по-умолчанию пустая строка, означающая, что будет используется, встроенный в загрузчик список)")
-	flag.StringVar(&adminPassword, "adminPassword", "", "пароль, дающий клиенту доступ к особым функциям сервера, при пустом значении эти функции остаются заблокированными")
-	flag.IntVar(&maxMsgSize, "msgSize", 1024, "максмальный размер одного сообщения, передаваемого через веб-сокеты (в байтах)")
-	flag.IntVar(&maxFileSize, "fileSize", 2*1024*1024, "максимальный размер файла, загружаемого на сервер (в байтах)")
-	flag.IntVar(&maxThreadsPerClient, "thread", 3, "максимальное количество потоков (горутин) на обработку запросов на одного клиента")
-	flag.IntVar(&fakeBoardsNum, "stub", 0, "количество ненастоящих, симулируемых устройств, которые будут восприниматься как настоящие, применяется для тестирования, при значении 0 или меньше фальшивые устройства не добавляются")
-	flag.BoolVar(&verbose, "verbose", false, "выводить в консоль подробную информацию")
-	flag.BoolVar(&alwaysUpdate, "alwaysUpdate", false, "всегда искать устройства и обновлять их список, даже когда ни один клиент не подключён (используется для тестирования)")
-	getListCooldownSeconds := flag.Int("listCooldown", 2, "минимальное время (в секундах), через которое клиент может снова запросить список устройств, игнорируется, если количество клиентов меньше чем 2")
-	updateListTimeSeconds := flag.Int("updateList", 15, "количество секунд между автоматическими обновлениями, не может быть меньше единицы, если получено значение меньше единицы, то оно заменяется на 1")
+	SettingsStorage.Args[address] = makeSetting(
+		"address",
+		"localhost:8080",
+		"адресс для подключения",
+		STRING,
+		false,
+	)
+	SettingsStorage.Args[avrdudePath] = makeSetting(
+		"avrdudePath",
+		"avrdude",
+		"путь к avrdude, используется системный путь по-умолчанию",
+		STRING,
+		true,
+	)
+	SettingsStorage.Args[configPath] = makeSetting(
+		"configPath",
+		"",
+		"путь к файлу конфигурации avrdude",
+		STRING,
+		true,
+	)
+	SettingsStorage.Args[deviceListPath] = makeSetting(
+		"deviceListPath",
+		"",
+		"путь к JSON-файлу со списком устройств. Если прописан, то заменяет стандартный список устройств, при условии, что не возникнет ошибок, связанных с чтением и открытием JSON-файла, иначе используется стандартный список устройств (по-умолчанию пустая строка, означающая, что будет используется, встроенный в загрузчик список)",
+		STRING,
+		false,
+	)
+	SettingsStorage.Args[adminPassword] = makeSetting(
+		"adminPassword",
+		"",
+		"пароль, дающий клиенту доступ к особым функциям сервера, при пустом значении эти функции остаются заблокированными",
+		STRING,
+		false,
+	)
+	SettingsStorage.Args[msgSize] = makeSettingWithChecker(
+		"msgSize",
+		int64(1024),
+		"максмальный размер одного сообщения, передаваемого через веб-сокеты (в байтах)",
+		INT64,
+		false,
+		func(value any) bool { return value.(int64) > 0 },
+	)
+	SettingsStorage.Args[fileSize] = makeSettingWithChecker(
+		"fileSize",
+		2*1024*1024,
+		"максимальный размер файла, загружаемого на сервер (в байтах)",
+		INT,
+		false,
+		func(value any) bool { return value.(int) > 0 },
+	)
+	SettingsStorage.Args[thread] = makeSettingWithChecker(
+		"thread",
+		3,
+		"максимальное количество потоков (горутин) на обработку запросов на одного клиента",
+		INT,
+		false,
+		func(value any) bool { return value.(int) > 0 },
+	)
+	SettingsStorage.Args[stub] = makeSettingWithChecker(
+		"stub",
+		0,
+		"количество ненастоящих, симулируемых устройств, которые будут восприниматься как настоящие, применяется для тестирования, при значении 0 или меньше фальшивые устройства не добавляются",
+		INT,
+		false,
+		func(value any) bool { return value.(int) > 0 },
+	)
+	SettingsStorage.Args[verbose] = makeSetting(
+		"verbose",
+		false,
+		"выводить в консоль подробную информацию",
+		BOOL,
+		false,
+	)
+	SettingsStorage.Args[alwaysUpdate] = makeSetting(
+		"alwaysUpdate",
+		false,
+		"всегда искать устройства и обновлять их список, даже когда ни один клиент не подключён (используется для тестирования)",
+		BOOL,
+		false,
+	)
+	SettingsStorage.Args[listCooldown] = makeSettingWithChecker(
+		"listCooldown",
+		int64(2),
+		"минимальное время (в секундах), через которое клиент может снова запросить список устройств, игнорируется, если количество клиентов меньше чем 2",
+		DURATION,
+		false,
+		func(value any) bool { return value.(time.Duration) > 0 },
+	)
+	SettingsStorage.Args[updateList] = makeSettingWithChecker(
+		"updateList",
+		int64(15),
+		"количество секунд между автоматическими обновлениями, не может быть меньше единицы",
+		DURATION,
+		false,
+		func(value any) bool { return value.(time.Duration) > 0 },
+	)
 	flag.Parse()
-	if fakeBoardsNum < 0 {
-		fakeBoardsNum = 0
+	for _, setting := range SettingsStorage.Args {
+		switch setting.Type {
+		case INT:
+			setting.Value = *setting.Value.(*int)
+		case INT64:
+			setting.Value = *setting.Value.(*int64)
+		case STRING:
+			setting.Value = *setting.Value.(*string)
+			//_, ok := setting.Value.(*string)
+			//log.Println("test", ok)
+		case BOOL:
+			setting.Value = *setting.Value.(*bool)
+		case DURATION:
+			setting.Value = time.Second * time.Duration(*setting.Value.(*int64))
+		}
+		log.Println(setting.Value)
+		if !setting.Check(setting.Value) {
+			setting.Value = setting.DefaultValue
+		}
 	}
-	if *updateListTimeSeconds < 1 {
-		*updateListTimeSeconds = 1
-	}
-	getListCooldownDuration = time.Second * time.Duration(*getListCooldownSeconds)
-	updateListTime = time.Second * time.Duration(*updateListTimeSeconds)
 }
 
 // вывод описания всех параметров с их значениями
 func printArgsDesc() {
-	webAddressStr := fmt.Sprintf("адрес: %s", webAddress)
-	maxFileSizeStr := fmt.Sprintf("максимальный размер файла: %d", maxFileSize)
-	maxMsgSizeStr := fmt.Sprintf("максимальный размер сообщения: %d", maxMsgSize)
-	maxThreadsPerClientStr := fmt.Sprintf("максимальное количество потоков (горутин) для обработки запросов на одного клиента: %d", maxThreadsPerClient)
-	getListCooldownDurationStr := fmt.Sprintf("перерыв для запроса списка устройств: %v", getListCooldownDuration)
-	updateListTimeStr := fmt.Sprintf("промежуток времени между автоматическими обновлениями: %v", updateListTime)
-	verboseStr := fmt.Sprintf("вывод подробной информации в консоль: %v", verbose)
-	alwaysUpdateStr := fmt.Sprintf("постоянное обновление списка устройств: %v", alwaysUpdate)
-	fakeBoardsNumStr := fmt.Sprintf("количество фальшивых устройств: %d", fakeBoardsNum)
-	avrdudePathStr := fmt.Sprintf("путь к avrdude (если написано avrdude, то используется системный путь): %s", avrdudePath)
-	configPathStr := fmt.Sprintf("путь к файлу конфигурации avrdude: %s", configPath)
-	deviceListPathStr := fmt.Sprintf("путь к файлу со списком устройств (если пусто, то используется встроенный список): %s", deviceListPath)
-	adminPasswordStr := fmt.Sprintf("пароль администратора (если пусто, то функции администратора заблокированы): %s", adminPassword)
+	webAddressStr := fmt.Sprintf("адрес: %s", SettingsStorage.getAddressSync())
+	maxFileSizeStr := fmt.Sprintf("максимальный размер файла: %d", SettingsStorage.getFileSizeSync())
+	maxMsgSizeStr := fmt.Sprintf("максимальный размер сообщения: %v", SettingsStorage.getMsgSizeSync())
+	maxThreadsPerClientStr := fmt.Sprintf("максимальное количество потоков (горутин) для обработки запросов на одного клиента: %d", SettingsStorage.getThreadSync())
+	getListCooldownDurationStr := fmt.Sprintf("перерыв для запроса списка устройств: %v", SettingsStorage.getListCooldownSync())
+	updateListTimeStr := fmt.Sprintf("промежуток времени между автоматическими обновлениями: %v", SettingsStorage.getUpdateListSync())
+	verboseStr := fmt.Sprintf("вывод подробной информации в консоль: %v", SettingsStorage.getVerboseSync())
+	alwaysUpdateStr := fmt.Sprintf("постоянное обновление списка устройств: %v", SettingsStorage.getAlwaysUpdateSync())
+	fakeBoardsNumStr := fmt.Sprintf("количество фальшивых устройств: %d", SettingsStorage.getStubSync())
+	avrdudePathStr := fmt.Sprintf("путь к avrdude (если написано avrdude, то используется системный путь): %s", SettingsStorage.getAvrdudePathSync())
+	configPathStr := fmt.Sprintf("путь к файлу конфигурации avrdude: %s", SettingsStorage.getConfigPathSync())
+	deviceListPathStr := fmt.Sprintf("путь к файлу со списком устройств (если пусто, то используется встроенный список): %s", SettingsStorage.getDeviceListPathSync())
+	adminPasswordStr := fmt.Sprintf("пароль администратора (если пусто, то функции администратора заблокированы): %s", SettingsStorage.getAdminPasswordSync())
 	log.Printf("Модуль загрузчика запущен со следующими параметрами:\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n",
 		webAddressStr,
 		maxFileSizeStr,

@@ -15,7 +15,7 @@ type void struct{}
 var detector *Detector
 
 func printLog(v ...any) {
-	if verbose {
+	if SettingsStorage.getVerboseSync() {
 		log.Println(v...)
 	}
 }
@@ -30,5 +30,5 @@ func main() {
 
 	http.HandleFunc("/flasher", manager.serveWS)
 
-	log.Fatal(http.ListenAndServe(webAddress, nil))
+	log.Fatal(http.ListenAndServe(SettingsStorage.getAddressSync(), nil))
 }

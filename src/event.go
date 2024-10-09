@@ -102,9 +102,9 @@ type DeviceIdMessage struct {
 }
 
 type SettingChangeMessage struct {
-	password     string // должен совпадать с AdminPassword
-	settingName  string // название настройки
-	settingValue any    // значение настройки (нужно самостоятельно приводить к нужному типу)
+	Password string `json:"password"` // должен совпадать с AdminPassword
+	ID       string `json:"ID"`       // ID настройки
+	Value    any    `json:"value"`    // значение настройки
 }
 
 // типы сообщений (событий)
@@ -216,7 +216,7 @@ func FlashStart(event Event, c *WebSocketConnection) error {
 	if msg.FileSize < 1 {
 		return nil
 	}
-	if msg.FileSize > maxFileSize {
+	if msg.FileSize > SettingsStorage.getFileSizeSync() {
 		return ErrFlashLargeFile
 	}
 	board, exists := detector.GetBoardSync(msg.ID)
@@ -341,7 +341,7 @@ func newDeviceUpdateDeleteMessage(deviceID string) *DeviceUpdateDeleteMessage {
 }
 
 func GetMaxFileSize(event Event, c *WebSocketConnection) error {
-	return c.sendOutgoingEventMessage(MaxFileSizeMsg, MaxFileSizeMessage{maxFileSize}, false)
+	return c.sendOutgoingEventMessage(MaxFileSizeMsg, MaxFileSizeMessage{SettingsStorage.getFileSizeSync()}, false)
 }
 
 func SerialConnect(event Event, c *WebSocketConnection) error {
@@ -698,6 +698,5 @@ func SettingChange(event Event, c *WebSocketConnection) error {
 	if err != nil {
 		return err
 	}
-	// TODO: блокировка изменения настроек
 	return nil
 }

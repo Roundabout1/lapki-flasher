@@ -32,7 +32,7 @@ func NewDetector() *Detector {
 	d.boards = make(map[string]*BoardFlashAndSerial)
 	// добавление фальшивых плат
 	d.generateFakeBoards()
-	d.initDeviceListErrorHandle(deviceListPath)
+	d.initDeviceListErrorHandle(SettingsStorage.getDeviceListPathSync())
 	d.dontAddTypes = make(map[int]void)
 	d.boardActions = list.New()
 	return &d
@@ -54,7 +54,7 @@ func (d *Detector) Update() (
 	detectedBoards = detectBoards(d.boardTemplates)
 
 	// добавление фальшивых плат к действительно обнаруженным
-	if fakeBoardsNum > 0 {
+	if SettingsStorage.getStubSync() > 0 {
 		if detectedBoards == nil {
 			detectedBoards = make(map[string]*BoardFlashAndSerial)
 		}
@@ -187,7 +187,7 @@ func (d *Detector) generateFakeBoards() {
 		BootloaderTypeID: bootloaderID,
 	}
 
-	for i := 0; i < fakeBoardsNum; i++ {
+	for i := 0; i < SettingsStorage.getStubSync(); i++ {
 		fakeID := fmt.Sprintf("fakeid-%d", i)
 		fakePort := fmt.Sprintf("fakecom-%d", i)
 		newFakeBoard := NewBoardToFlash(fakeType, fakePort)
@@ -202,7 +202,7 @@ func (d *Detector) generateFakeBoards() {
 
 // true = плата с данным ID является фальшивой
 func (d *Detector) isFake(ID string) bool {
-	if fakeBoardsNum > 0 {
+	if SettingsStorage.getStubSync() > 0 {
 		_, exists := d.fakeBoards[ID]
 		if exists {
 			return true

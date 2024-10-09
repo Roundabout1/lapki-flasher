@@ -34,7 +34,7 @@ func NewWebSocketManager() *WebSocketManager {
 	m.connections = initSyncLenMap()
 	m.handlers = make(map[string]EventHandler)
 	m.setupEventHandlers()
-	m.updateTicker = *ticker.New(updateListTime)
+	m.updateTicker = *ticker.New(SettingsStorage.getUpdateListSync())
 	m.updateTicker.Start()
 	go m.updater()
 	return &m
@@ -67,7 +67,7 @@ func (m *WebSocketManager) serveWS(w http.ResponseWriter, r *http.Request) {
 		log.Println(err)
 		return
 	}
-	c := NewWebSocket(conn, newCooldown(getListCooldownDuration, m), maxThreadsPerClient)
+	c := NewWebSocket(conn, newCooldown(SettingsStorage.getListCooldownSync(), m), SettingsStorage.getThreadSync())
 	m.addClient(c)
 	defer func() {
 		m.updateTicker.Stop()
@@ -99,7 +99,7 @@ func (m *WebSocketManager) readerHandler(c *WebSocketConnection) {
 		m.removeClient(c)
 	}()
 
-	c.wsc.SetReadLimit(int64(maxMsgSize))
+	c.wsc.SetReadLimit(SettingsStorage.getMsgSizeSync())
 	for {
 		if c.isClosedChan() {
 			return
@@ -165,7 +165,7 @@ func (m *WebSocketManager) writerHandler(c *WebSocketConnection) {
 func (m *WebSocketManager) updater() {
 	for {
 		<-m.updateTicker.C
-		if alwaysUpdate || m.connections.Len() > 0 {
+		if SettingsStorage.getAlwaysUpdateSync() || m.connections.Len() > 0 {
 			printLog("update")
 			UpdateList(nil, m)
 		}

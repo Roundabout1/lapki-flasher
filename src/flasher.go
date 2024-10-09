@@ -57,16 +57,17 @@ func autoFlash(board *BoardFlashAndSerial, filePath string) (flashMessage string
 	flashFile := "flash:w:" + getAbolutePath(filePath) + ":a"
 	// без опции "-D" не может прошить Arduino Mega
 	args := []string{"-D", "-p", board.Type.Controller, "-c", board.Type.Programmer, "-P", board.getPort(), "-U", flashFile}
-	if configPath != "" {
-		args = append(args, "-C", configPath)
+	config := SettingsStorage.getConfigPathSync()
+	if config != "" {
+		args = append(args, "-C", config)
 	}
-	printLog(avrdudePath, args)
+	printLog(SettingsStorage.getAvrdudePathSync(), args)
 	return flash(args)
 }
 
 // прошивка через avrdude с аргументами, указанными в avrdudeArgs
 func flash(avrdudeArgs []string) (avrdudeMessage string, err error) {
-	cmd := exec.Command(avrdudePath, avrdudeArgs...)
+	cmd := exec.Command(SettingsStorage.getAvrdudePathSync(), avrdudeArgs...)
 	stdout, err := cmd.CombinedOutput()
 	avrdudeMessage = handleFlashResult(string(stdout), err)
 	return
