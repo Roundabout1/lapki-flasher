@@ -50,9 +50,11 @@ type Setting struct {
 	Check        Checker // валидация значения настройки
 }
 
+const NUM_SETTINGS = 13
+
 type Settings struct {
 	mu   sync.Mutex
-	Args [13]*Setting
+	Args [NUM_SETTINGS]*Setting
 }
 
 func (settings *Settings) getSettingSync(index SettingKey) *Setting {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/polyus-nt/ms1-go/pkg/ms1"
 )
@@ -102,9 +103,9 @@ type DeviceIdMessage struct {
 }
 
 type SettingChangeMessage struct {
-	Password string `json:"password"` // должен совпадать с AdminPassword
-	ID       string `json:"ID"`       // ID настройки
-	Value    any    `json:"value"`    // значение настройки
+	Password string     `json:"password"` // должен совпадать с AdminPassword
+	ID       SettingKey `json:"ID"`       // ID настройки
+	Value    any        `json:"value"`    // значение настройки
 }
 
 // типы сообщений (событий)
@@ -693,10 +694,60 @@ func msDeviceMessageMakeSync(deviceID string, board *BoardFlashAndSerial) *MSDev
 }
 
 func SettingChange(event Event, c *WebSocketConnection) error {
+	if SettingsStorage.getAdminPasswordSync() == "" {
+		// TODO: функция недоступна
+		return nil
+	}
 	var msg SettingChangeMessage
 	err := json.Unmarshal(event.Payload, &msg)
 	if err != nil {
 		return err
 	}
+	if msg.Password != SettingsStorage.getAdminPasswordSync() {
+		// TODO: неправильный пароль
+		return nil
+	}
+	if msg.ID < 0 || msg.ID >= NUM_SETTINGS {
+		// TODO: некорректный ID
+		return nil
+	}
+	if !SettingsStorage.Args[msg.ID].Changable {
+		// TODO
+		return nil
+	}
+	isTypeOk := false
+	switch SettingsStorage.Args[msg.ID].Type {
+	case INT:
+		_, isTypeOk = msg.Value.(int)
+	case INT64:
+		newValue, ok := msg.Value.(int)
+		if !ok {
+			// TODO
+			return nil
+		}
+		isTypeOk = ok
+		msg.Value = int64(newValue)
+	case DURATION:
+		newValue, ok := msg.Value.(int)
+		if !ok {
+			// TODO
+			return nil
+		}
+		isTypeOk = ok
+		msg.Value = time.Second * time.Duration(newValue)
+	case STRING:
+		_, isTypeOk = msg.Value.(string)
+	case BOOL:
+		_, isTypeOk = msg.Value.(bool)
+	default:
+		// TODO
+		return nil
+	}
+	if !isTypeOk {
+		// TODO
+		return nil
+	}
+	SettingsStorage.setSettingValueSync(msg.ID, msg.Value)
+	// TODO: Отправка оповещения о том, что настройка изменена
 	return nil
 }
