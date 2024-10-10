@@ -48,7 +48,7 @@ func NewWebSocket(wsc *websocket.Conn, getListCoolDown *Cooldown, maxQueries int
 	c.getListCooldown = getListCoolDown
 	c.maxQueries = maxQueries
 	c.numQueries = 0
-	c.admin = false
+	c.admin = SettingsStorage.getLocalSync()
 	return &c
 }
 

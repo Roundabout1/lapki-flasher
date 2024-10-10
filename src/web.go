@@ -63,6 +63,9 @@ func (m *WebSocketManager) setupEventHandlers() {
 
 // обработка нового соединения
 func (m *WebSocketManager) serveWS(w http.ResponseWriter, r *http.Request) {
+	if SettingsStorage.getLocalSync() && m.hasMultipleConnections() {
+		return
+	}
 	printLog("New connection")
 	conn, err := websocketUpgrader.Upgrade(w, r, nil)
 	if err != nil {

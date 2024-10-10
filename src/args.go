@@ -38,6 +38,7 @@ const (
 	alwaysUpdate
 	listCooldown
 	updateList
+	local
 )
 
 type Checker func(value any) bool
@@ -50,7 +51,7 @@ type Setting struct {
 	Check        Checker // валидация значения настройки
 }
 
-const NUM_SETTINGS = 13
+const NUM_SETTINGS = 14
 
 type Settings struct {
 	mu   sync.Mutex
@@ -108,6 +109,10 @@ func (settings *Settings) getListCooldownSync() time.Duration {
 
 func (settings *Settings) getUpdateListSync() time.Duration {
 	return settings.getSettingSync(updateList).Value.(time.Duration)
+}
+
+func (settings *Settings) getLocalSync() bool {
+	return settings.getSettingSync(local).Value.(bool)
 }
 
 var SettingsStorage Settings
@@ -238,6 +243,13 @@ func setArgs() {
 		false,
 		func(value any) bool { return value.(time.Duration) > 0 },
 	)
+	SettingsStorage.Args[local] = makeSetting(
+		"local",
+		false,
+		"локальный режим, в котором права администратора даются по-умолчанию, а количество клиентов ограничено одним",
+		BOOL,
+		false,
+	)
 	flag.Parse()
 	for _, setting := range SettingsStorage.Args {
 		switch setting.Type {
@@ -272,8 +284,9 @@ func printArgsDesc() {
 	avrdudePathStr := fmt.Sprintf("путь к avrdude (если написано avrdude, то используется системный путь): %s", SettingsStorage.getAvrdudePathSync())
 	configPathStr := fmt.Sprintf("путь к файлу конфигурации avrdude: %s", SettingsStorage.getConfigPathSync())
 	deviceListPathStr := fmt.Sprintf("путь к файлу со списком устройств (если пусто, то используется встроенный список): %s", SettingsStorage.getDeviceListPathSync())
-	adminPasswordStr := fmt.Sprintf("пароль администратора (если пусто, то функции администратора заблокированы): %s", SettingsStorage.getAdminPasswordSync())
-	log.Printf("Модуль загрузчика запущен со следующими параметрами:\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n",
+	adminPasswordStr := fmt.Sprintf("пароль администратора (если пусто, то функции администратора заблокированы, если не включен локальный режим): %s", SettingsStorage.getAdminPasswordSync())
+	localStr := fmt.Sprintf("локальный режим, в котором админские права даются по-умолчанию, а количество клиентов ограничено одним: %v", SettingsStorage.getLocalSync())
+	log.Printf("Модуль загрузчика запущен со следующими параметрами:\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n",
 		webAddressStr,
 		maxFileSizeStr,
 		maxMsgSizeStr,
@@ -287,5 +300,6 @@ func printArgsDesc() {
 		configPathStr,
 		deviceListPathStr,
 		adminPasswordStr,
+		localStr,
 	)
 }
