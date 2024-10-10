@@ -34,6 +34,8 @@ type WebSocketConnection struct {
 	maxQueries int
 	// количество запросов, которые обрабатываются в данный момент
 	numQueries int
+	// имеет ли доступ к особым функциям
+	admin bool
 }
 
 func NewWebSocket(wsc *websocket.Conn, getListCoolDown *Cooldown, maxQueries int) *WebSocketConnection {
@@ -46,6 +48,7 @@ func NewWebSocket(wsc *websocket.Conn, getListCoolDown *Cooldown, maxQueries int
 	c.getListCooldown = getListCoolDown
 	c.maxQueries = maxQueries
 	c.numQueries = 0
+	c.admin = false
 	return &c
 }
 
@@ -144,4 +147,16 @@ func (c *WebSocketConnection) sendOutgoingEventMessage(msgType string, payload a
 	outgoingMsg.toAll = toAll
 	c.outgoingMsg <- outgoingMsg
 	return
+}
+
+func (c *WebSocketConnection) isAdminSync() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.admin
+}
+
+func (c *WebSocketConnection) makeAdminSync() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.admin = true
 }

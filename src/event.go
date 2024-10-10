@@ -102,10 +102,41 @@ type DeviceIdMessage struct {
 	ID string `json:"deviceID"`
 }
 
+type CommentCodeMessage struct {
+	Code    int    `json:"code"`
+	Comment string `json:"comment"`
+}
+
+type RequestAdminMessage struct {
+	Password string `json:"password"`
+}
+
+const (
+	ADMIN_GRANTED = iota
+	ADMIN_DENIED
+	ADMIN_JSON_ERROR = 4
+)
+
 type SettingChangeMessage struct {
-	Password string     `json:"password"` // должен совпадать с AdminPassword
-	ID       SettingKey `json:"ID"`       // ID настройки
-	Value    any        `json:"value"`    // значение настройки
+	ID    SettingKey `json:"ID"`    // ID настройки
+	Value any        `json:"value"` // значение настройки
+}
+
+type SettingChangeStatus int
+
+const (
+	SETTING_UPDATED    SettingChangeStatus = iota // значение настройки поменялось
+	SETTING_WRONG_ID                              // настройки с таким ID не существует
+	SETTING_WRONG_TYPE                            // тип значения value в JSON-сообщении от клиента не соответствует типу настройки на сервере
+	SETTING_JSON_ERR                              // не удалось распарсить сообщение от клиента
+	SETTING_DENIED                                // отказано в доступе
+)
+
+type SettingUpdateMessage struct {
+	ID       SettingKey          `json:"ID"`      // значение настройки, которое изменилось
+	NewValue any                 `json:"value"`   // новое значение настройки (пусто, если ничего не изменилось)
+	Code     SettingChangeStatus `json:"code"`    // код выполнения операции изменения настройки
+	Comment  string              `json:"comment"` // дополнительный комментарий (может отсутствовать)
 }
 
 // типы сообщений (событий)
@@ -158,6 +189,12 @@ const (
 	MSAddressMsg = "ms-address"
 	// запрос на изменение настройки загрузчика
 	SettingChangeMsg = "setting-change"
+	// сообщению клиенту о том, что настройки изменились
+	SettingUpdateMsg = "setting-update"
+	// запрос клиента на админские права
+	RequestAdminMsg = "request-admin"
+	// отправка клиенту результата обработки запроса на админские права
+	RequestAdminReportMsg = "request-admin-report"
 )
 
 // отправить клиенту список всех устройств
@@ -693,26 +730,50 @@ func msDeviceMessageMakeSync(deviceID string, board *BoardFlashAndSerial) *MSDev
 	return &devMes
 }
 
+func SettingUpdate(setUpd SettingUpdateMessage, client *WebSocketConnection) {
+	client.sendOutgoingEventMessage(SettingUpdateMsg, setUpd, setUpd.Code == SETTING_UPDATED)
+}
+
 func SettingChange(event Event, c *WebSocketConnection) error {
-	if SettingsStorage.getAdminPasswordSync() == "" {
-		// TODO: функция недоступна
+	if !c.admin {
+		SettingUpdate(
+			SettingUpdateMessage{
+				Code:    SETTING_DENIED,
+				Comment: "Клиент не имеет прав доступа для изменения настроек",
+			},
+			c,
+		)
 		return nil
 	}
 	var msg SettingChangeMessage
 	err := json.Unmarshal(event.Payload, &msg)
 	if err != nil {
+		SettingUpdate(
+			SettingUpdateMessage{
+				Code:    SETTING_JSON_ERR,
+				Comment: err.Error(),
+			},
+			c,
+		)
 		return err
 	}
-	if msg.Password != SettingsStorage.getAdminPasswordSync() {
-		// TODO: неправильный пароль
-		return nil
-	}
 	if msg.ID < 0 || msg.ID >= NUM_SETTINGS {
-		// TODO: некорректный ID
+		SettingUpdate(SettingUpdateMessage{
+			ID:   msg.ID,
+			Code: SETTING_WRONG_ID,
+		},
+			c,
+		)
 		return nil
 	}
 	if !SettingsStorage.Args[msg.ID].Changable {
-		// TODO
+		SettingUpdate(SettingUpdateMessage{
+			ID:      msg.ID,
+			Code:    SETTING_DENIED,
+			Comment: "Эта настройка является неизменяемой",
+		},
+			c,
+		)
 		return nil
 	}
 	isTypeOk := false
@@ -720,34 +781,88 @@ func SettingChange(event Event, c *WebSocketConnection) error {
 	case INT:
 		_, isTypeOk = msg.Value.(int)
 	case INT64:
-		newValue, ok := msg.Value.(int)
-		if !ok {
-			// TODO
-			return nil
+		_, isTypeOk = msg.Value.(int)
+		if isTypeOk {
+			msg.Value = int64(msg.Value.(int))
 		}
-		isTypeOk = ok
-		msg.Value = int64(newValue)
 	case DURATION:
-		newValue, ok := msg.Value.(int)
-		if !ok {
-			// TODO
-			return nil
+		_, isTypeOk = msg.Value.(int)
+		if isTypeOk {
+			msg.Value = time.Second * time.Duration(msg.Value.(int))
 		}
-		isTypeOk = ok
-		msg.Value = time.Second * time.Duration(newValue)
 	case STRING:
 		_, isTypeOk = msg.Value.(string)
 	case BOOL:
 		_, isTypeOk = msg.Value.(bool)
 	default:
-		// TODO
+		printLog("Unknown type of setting!")
 		return nil
 	}
 	if !isTypeOk {
-		// TODO
+		SettingUpdate(
+			SettingUpdateMessage{
+				ID:   msg.ID,
+				Code: SETTING_WRONG_TYPE,
+			},
+			c,
+		)
 		return nil
 	}
 	SettingsStorage.setSettingValueSync(msg.ID, msg.Value)
-	// TODO: Отправка оповещения о том, что настройка изменена
+	SettingUpdate(SettingUpdateMessage{
+		ID:       msg.ID,
+		NewValue: msg.Value,
+		Code:     SETTING_UPDATED,
+	},
+		c,
+	)
+	return nil
+}
+
+func RequestAdminReport(report CommentCodeMessage, client *WebSocketConnection) {
+	client.sendOutgoingEventMessage(RequestAdminMsg, report, false)
+}
+
+func RequestAdmin(event Event, c *WebSocketConnection) error {
+	adminPassword := SettingsStorage.getAdminPasswordSync()
+	if adminPassword == "" {
+		RequestAdminReport(
+			CommentCodeMessage{
+				Code:    ADMIN_DENIED,
+				Comment: "Функции администратора заблокированы на этом сервере",
+			},
+			c,
+		)
+		return nil
+	}
+	var msg RequestAdminMessage
+	err := json.Unmarshal(event.Payload, &msg)
+	if err != nil {
+		RequestAdminReport(
+			CommentCodeMessage{
+				Code:    ADMIN_JSON_ERROR,
+				Comment: err.Error(),
+			},
+			c,
+		)
+		return err
+	}
+	if adminPassword != msg.Password {
+		RequestAdminReport(
+			CommentCodeMessage{
+				Code:    ADMIN_DENIED,
+				Comment: "Неправильный пароль",
+			},
+			c,
+		)
+		return nil
+	}
+	c.makeAdminSync()
+	RequestAdminReport(
+		CommentCodeMessage{
+			Code: ADMIN_GRANTED,
+		},
+		c,
+	)
 	return nil
 }
