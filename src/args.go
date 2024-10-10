@@ -229,15 +229,15 @@ func setArgs() {
 	)
 	SettingsStorage.Args[listCooldown] = makeSettingWithChecker(
 		"listCooldown",
-		int64(2),
+		int64(2), // замениться на тип time.Duration в цикле в конце
 		"минимальное время (в секундах), через которое клиент может снова запросить список устройств, игнорируется, если количество клиентов меньше чем 2",
 		DURATION,
 		false,
-		func(value any) bool { return value.(time.Duration) > 0 },
+		func(value any) bool { return value.(time.Duration) >= 0 },
 	)
 	SettingsStorage.Args[updateList] = makeSettingWithChecker(
 		"updateList",
-		int64(15),
+		int64(15), // замениться на тип time.Duration в цикле в конце
 		"количество секунд между автоматическими обновлениями, не может быть меньше единицы",
 		DURATION,
 		false,
@@ -263,6 +263,7 @@ func setArgs() {
 			setting.Value = *setting.Value.(*bool)
 		case DURATION:
 			setting.Value = time.Second * time.Duration(*setting.Value.(*int64))
+			setting.DefaultValue = time.Second * time.Duration(setting.DefaultValue.(int64))
 		}
 		if !setting.Check(setting.Value) {
 			setting.Value = setting.DefaultValue
