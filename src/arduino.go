@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"io"
 	"os/exec"
 	"time"
 )
@@ -98,8 +99,28 @@ func (board *Arduino) Flash(filePath string) (string, error) {
 		args = append(args, "-C", configPath)
 	}
 	cmd := exec.Command(avrdudePath, args...)
-	stdout, err := cmd.CombinedOutput()
-	avrdudeMessage := handleFlashResult(string(stdout), err)
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return "StderrPipe error.", err
+	}
+	slurp, err := io.ReadAll(stderr)
+	if err != nil {
+		return "io.ReadAll stderr error.", err
+	}
+	printLog("stderr:", slurp)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "StdoutPipe error.", err
+	}
+	slurp, err = io.ReadAll(stdout)
+	if err != nil {
+		return "io.ReadAll stdout error.", err
+	}
+	printLog("stdout:", slurp)
+	if err := cmd.Wait(); err != nil {
+		return "cmd.Wait error.", err
+	}
+	avrdudeMessage := handleFlashResult(string(slurp), err)
 	return avrdudeMessage, err
 }
 
