@@ -44,7 +44,7 @@ func (board *BlgMb) CyberBearLoader(args ...string) ([]byte, error) {
 }
 
 func (board *BlgMb) Flash(filePath string, logger chan any) (string, error) {
-	stdout, err := board.CyberBearLoader("-m", "b1", "load", "-f", filePath)
+	stdout, err := board.CyberBearLoader("load", "-f", filePath, "-b")
 	msg := handleFlashResult(string(stdout), err)
 	return msg, err
 }
@@ -100,4 +100,56 @@ func (board *BlgMb) GetVersion() (string, error) {
 	}
 
 	return "", fmt.Errorf("art value not found")
+}
+
+// Извлечение прошивки
+func (board *BlgMb) Extract() ([]byte, error) {
+	_, err := board.CyberBearLoader("reboot", "-b")
+	if err != nil {
+		return []byte{}, err
+	}
+	_, err = board.CyberBearLoader("-m", "b1", "wait", "-t", "5")
+	if err != nil {
+		return []byte{}, err
+	}
+	bytes, err := board.CyberBearLoader("extract", "--pages", "44")
+	if err != nil {
+		return bytes, err
+	}
+	_, err = board.CyberBearLoader("reboot")
+	if err != nil {
+		// Предупреждаем, но не прекращаем работу
+		printLog("Не удалось перезагрузить КиберМишку:", err.Error())
+	}
+	return bytes, nil
+}
+
+func (board *BlgMb) GetId() (string, error) {
+	// TODO: унификация кода
+	value, err := board.GetMetaData()
+	if err != nil {
+		return "", err
+	}
+	meta, ok := value.(string)
+	if !ok {
+		return "", errors.New("ошибка преобразования данных при попытке получить версию КиберМишки")
+	}
+
+	scanner := bufio.NewScanner(strings.NewReader(meta))
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		printLog("scan", line)
+		if strings.HasPrefix(line, "Serial:") {
+			parts := strings.SplitN(line, ":", 2)
+			printLog(parts, len(parts))
+			if len(parts) == 2 {
+				board.serialID = strings.TrimSpace(parts[1])
+				printLog("serial id", board.serialID)
+				return board.serialID, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("serial value not found")
 }
