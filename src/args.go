@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"log"
 	"time"
+	"os"
+
+"runtime/debug"
 )
 
 // адрес на котором будет работать этот сервер
@@ -59,6 +62,8 @@ var settingsPath string
 // путь к программе для прошивки кибермишки
 var blgMbUploaderPath string
 
+var showVersion bool
+
 // TODO: генерация аргументов коммандной строки из json файла
 /*
 чтение флагов и происвоение им стандартных значений.
@@ -84,7 +89,26 @@ func setArgs() {
 	getListCooldownSeconds := flag.Int("listCooldown", 2, "минимальное время (в секундах), через которое клиент может снова запросить список устройств, игнорируется, если количество клиентов меньше чем 2")
 	updateListTimeSeconds := flag.Int("updateList", 15, "количество секунд между автоматическими обновлениями, не может быть меньше единицы, если получено значение меньше единицы, то оно заменяется на 1")
 	disconnectGraceSeconds := flag.Int("deviceDisconnectGrace", 1, "время (в секундах), в течение которого временно исчезнувшее USB-устройство не удаляется из списка; 0 отключает задержку")
+	flag.BoolVar(&showVersion, "version", false, "Показать последний коммит")
 	flag.Parse()
+
+var Commit = func() string {
+    if info, ok := debug.ReadBuildInfo(); ok {
+        for _, setting := range info.Settings {
+            if setting.Key == "vcs.revision" {
+                return setting.Value
+            }
+        }
+    }
+
+    return ""
+}()
+
+
+	if showVersion {
+		fmt.Printf("Последний коммит: %s\n", Commit)
+		os.Exit(0)
+	}
 
 	// параметры, явно переданные через командную строку, имеют приоритет над settings.json
 	setFlags := make(map[string]bool)
@@ -134,7 +158,9 @@ func printArgsDesc() {
 	deviceListPathStr := fmt.Sprintf("путь к файлу со списком устройств (если пусто, то используется встроенный список): %s", deviceListPath)
 	blgMbUploaderPathStr := fmt.Sprintf("путь к программе для прошивки кибермишки: %s", blgMbUploaderPath)
 	settingsPathStr := fmt.Sprintf("путь к файлу с настройками сервера (если пусто, то используется встроенный settings.json): %s", settingsPath)
-	log.Printf("Модуль загрузчика запущен со следующими параметрами:\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n",
+	// написано на английском, чтобы отображалось даже в тех случаях, когда кириллица не поддерживается
+	lastCommitStr := fmt.Sprintf("git commit: %s", Commit)
+	log.Printf("Модуль загрузчика запущен со следующими параметрами:\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n %s\n",
 		webAddressStr,
 		maxFileSizeStr,
 		maxMsgSizeStr,
@@ -151,5 +177,6 @@ func printArgsDesc() {
 		deviceListPathStr,
 		blgMbUploaderPathStr,
 		settingsPathStr,
+		lastCommitStr,
 	)
 }

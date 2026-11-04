@@ -10,6 +10,7 @@ import (
 	"os"
 	"sync"
 	"time"
+	//"go.bug.st/serial/enumerator"
 )
 
 type Detector struct {
