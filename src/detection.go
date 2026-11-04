@@ -1,6 +1,8 @@
 package main
 
 import (
+	"strings"
+	"maps"
 	"container/list"
 	_ "embed"
 	"encoding/json"
@@ -10,7 +12,6 @@ import (
 	"os"
 	"sync"
 	"time"
-	//"go.bug.st/serial/enumerator"
 )
 
 type Detector struct {
@@ -70,9 +71,7 @@ func (d *Detector) Update() (
 		if detectedBoards == nil {
 			detectedBoards = make(map[string]*Device)
 		}
-		for ID, board := range d.fakeBoards {
-			detectedBoards[ID] = board
-		}
+		maps.Copy(detectedBoards, d.fakeBoards)
 	}
 
 	// обновление информации о старых устройствах и добавление новых
@@ -251,28 +250,26 @@ func (d *Detector) generateFakeBoards() {
 	for i := 0; i < fakeMSNum; i++ {
 		fakeID := fmt.Sprintf("fakeidms-%d", i)
 		var fakePorts [4]string
-		for j := 0; j < 4; j++ {
+		for j := range 4 {
 			fakePorts[j] = fmt.Sprintf("fms-%d", i+j)
 		}
-		var fakeAddress string
+		var fakeAddress strings.Builder
 		// тут может быть проблема, если количество фальшивых МС-ТЮК огромнно
 		for j := 0; j < 16-len(fakeID); j++ {
-			fakeAddress += "0"
+			fakeAddress.WriteString("0")
 		}
-		fakeAddress += fakeID
+		fakeAddress.WriteString(fakeID)
 		newFakeBoard := newDevice(
 			fakeMsTemp,
 			&FakeMS{
 				portNames:     fakePorts,
-				fakeAddress:   fakeAddress,
+				fakeAddress:   fakeAddress.String(),
 				clientAddress: "",
 			},
 		)
 		d.fakeBoards[fakeID] = newFakeBoard
 	}
-	for ID, board := range d.fakeBoards {
-		d.boards[ID] = board
-	}
+	maps.Copy(d.boards, d.fakeBoards)
 }
 
 //go:embed device_list.JSON
