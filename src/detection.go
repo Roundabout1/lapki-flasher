@@ -1,24 +1,28 @@
 package main
 
 import (
-	"strings"
-	"maps"
 	"container/list"
 	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"os"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/gousb"
+	"go.bug.st/serial/enumerator"
 )
 
 type Detector struct {
 	// список доступных для прошивки устройств
-	boards         map[string]*Device
-	boardTemplates []BoardTemplate
-	mu             sync.Mutex
+	boards                  map[string]*Device
+	serialBoardTemplates    []BoardTemplate
+	nonSerialBoardTemplates []BoardTemplate
+	mu                      sync.Mutex
 
 	// симуляция плат
 	fakeBoards map[string]*Device
@@ -38,7 +42,14 @@ func NewDetector() *Detector {
 	d.boards = make(map[string]*Device)
 	// добавление фальшивых плат
 	d.generateFakeBoards()
-	d.initDeviceListErrorHandle(deviceListPath)
+	templates := parseBoardTemplateList(deviceListPath)
+	for _, template := range templates {
+		if template.NoSerial {
+			d.nonSerialBoardTemplates = append(d.nonSerialBoardTemplates, template)
+		} else {
+			d.serialBoardTemplates = append(d.serialBoardTemplates, template)
+		}
+	}
 	d.dontAddTypes = make(map[int]void)
 	d.missingSince = make(map[string]time.Time)
 	d.boardActions = list.New()
@@ -64,7 +75,91 @@ func (d *Detector) Update() (
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	detectedBoards = detectBoards(d.boardTemplates)
+	detectedBoards = make(map[string]*Device)
+
+
+	// так как у некоторых устройств, нет серийного порта, то их приходится искать отдельно
+	func() {
+		ctx := gousb.NewContext()
+		defer ctx.Close()
+
+		_, err := ctx.OpenDevices(func(desc *gousb.DeviceDesc) bool {
+			vidpid := VidPid{
+				VendorID: desc.Vendor.String(),
+				ProductID: desc.Product.String(),
+			}
+			boardTemplate := matchTemplate(d.nonSerialBoardTemplates, vidpid)
+			if boardTemplate == nil {
+				return false
+			}
+
+			if boardTemplate.IsBlgMbDevice() {
+				printLog("found blg-mb")
+				detectedBoards[vidpid.ProductID + vidpid.ProductID + "blg-mb"] = newDevice(*boardTemplate, &BlgMb{})
+				return false
+			}
+
+			log.Printf("missed template: vidpid(%s; %s); name(%s)\n", vidpid.VendorID, vidpid.ProductID, boardTemplate.Name)
+			return false
+		})
+
+		if err != nil {
+			log.Printf("error during searching for USB devices WITHOUT serial ports: %v\n", err)
+		}
+
+	}()
+
+	func() {
+		ports, err := enumerator.GetDetailedPortsList()
+		if err != nil {
+			log.Printf("error during searching for USB devices WITH serial ports: %v\n", err)
+			return
+		}
+
+		for _, port := range ports {
+			printLog("Found port:", port.Name)
+			if !port.IsUSB {
+				printLog("The port isn't USB")
+				continue
+			}
+			printLog("   USB VID:", port.VID)
+			printLog("   USB PID:", port.PID)
+			printLog("   Serial: ", port.SerialNumber)
+			printLog("   Product: ", port.Product)
+
+			vidpid := VidPid {
+				VendorID: port.VID,
+					ProductID: port.PID,
+			}
+			boardTemplate := matchTemplate(d.serialBoardTemplates, vidpid)
+			if boardTemplate == nil {
+				printLog("No template match")
+				continue
+			}
+
+			var board Board
+			if boardTemplate.IsMSDevice() {
+				// TODO
+			} else if boardTemplate.IsArduinoDevice() {
+				board = NewArduinoFromTemp(
+					*boardTemplate,
+					port.Name,
+					port.SerialNumber,
+				)
+			} else {
+				printLog("no searching algorithm for this type of device!", boardTemplate.Type)
+				break
+			}
+			var id string
+			if port.SerialNumber != "" {
+				id = port.SerialNumber
+
+			} else {
+				id = port.VID + port.PID + port.Name + port.Product
+			}
+			detectedBoards[id] = newDevice(*boardTemplate, board)
+		}
+	}()
 
 	// добавление фальшивых плат к действительно обнаруженным
 	if fakeBoardsNum > 0 || fakeMSNum > 0 {
@@ -208,10 +303,6 @@ func (d *Detector) DeleteAndAlert(newBoards map[string]*Device, c *WebSocketConn
 	d.mu.Unlock()
 }
 
-func (d *Detector) boardList() []BoardTemplate {
-	return d.boardTemplates
-}
-
 // генерация фальшивых плат, которые будут восприниматься программой как настоящие
 func (d *Detector) generateFakeBoards() {
 	d.fakeBoards = make(map[string]*Device)
@@ -222,7 +313,7 @@ func (d *Detector) generateFakeBoards() {
 	fakeArduinoTemp := BoardTemplate{
 		ID:                 -1,
 		Name:               "Fake Board",
-		PidVid:             []PidVidType{},
+		PidVid:             []VidPid{},
 		Type:               "Fake arduino",
 		FlashFileExtension: "hex",
 	}
@@ -242,7 +333,7 @@ func (d *Detector) generateFakeBoards() {
 	fakeMsTemp := BoardTemplate{
 		ID:                 -2,
 		Name:               "Fake ms1",
-		PidVid:             []PidVidType{},
+		PidVid:             []VidPid{},
 		Type:               "Fake ms",
 		FlashFileExtension: "bin",
 	}
@@ -276,55 +367,48 @@ func (d *Detector) generateFakeBoards() {
 var boardTemplatesRaw []byte
 
 /*
-Добавление списка устройств в детектор.
+Парсинг списка шаблонов устройств и обработка ошибок
 
 pathToList - путь к json-файлу со списком устройств.
 Если pathToList - пуст, то используется стандартный список (boardTemplatesRaw)
 */
-func (d *Detector) initDeviceList(pathToList string) error {
-	if pathToList == "" {
-		err := json.Unmarshal(boardTemplatesRaw, &d.boardTemplates)
-		if err != nil {
-			return err
+func parseBoardTemplateList(pathToList string) []BoardTemplate {
+	attempt := func(pathToList string) ([]BoardTemplate, error) {
+		var templates []BoardTemplate
+		if pathToList == "" {
+			err := json.Unmarshal(boardTemplatesRaw, &templates)
+			return templates, err
 		}
-	} else {
 		jsonFile, err := os.Open(pathToList)
 		if err != nil {
 			//log.Println("Can't open json file with custom device list. Standard device list will be used instead.", err.Error())
-			return err
+			return templates, err
 		}
 		defer jsonFile.Close()
 		byteValue, err := io.ReadAll(jsonFile)
 		if err != nil {
 			//log.Println("Can't read json file with custom device list. Standard device list will be used instead.", err.Error())
-			return err
+			return templates, err
 		}
-		err = json.Unmarshal(byteValue, &d.boardTemplates)
+		err = json.Unmarshal(byteValue, &templates)
 		if err != nil {
 			//log.Println("Can't unmarshal json file with custom device list. Standard device list will be used instead.", err.Error())
-			return err
+			return templates, err
 		}
+
+		return templates, nil
 	}
-	return nil
-}
-
-/*
-Обработка ошибок, связанных с добавлением списка устройств в детектор.
-
-pathToList - путь к json-файлу со списком устройств.
-Если pathToList - пуст, то используется стандартный список (boardTemplatesRaw)
-*/
-func (d *Detector) initDeviceListErrorHandle(pathToList string) {
-	err := d.initDeviceList(pathToList)
+	templates, err := attempt(pathToList)
 	if err != nil {
 		if pathToList == "" {
 			log.Fatal("Can't run lapki-flasher because failed to use standart device list. Device detector won't be able to work!", err.Error())
 		} else {
 			log.Println("Can't use json file with custom device list because of error. Standard device list will be used instead.", err.Error())
-			d.initDeviceListErrorHandle("")
-			return
+			parseBoardTemplateList("")
+			return templates
 		}
 	}
+	return templates
 }
 
 func (d *Detector) boardExists(deviceID string) bool {

@@ -119,11 +119,11 @@ func detectBoards(boardTemplates []BoardTemplate) map[string]*Device {
 				board = NewArduinoFromTemp(
 					boardTemplate,
 					ports[0],
-					ArduinoOS{
-						deviceID:  id,
-						productID: pid,
-						vendorID:  vid,
-					},
+					// ArduinoOS{
+					// 	deviceID:  id,
+					// 	productID: pid,
+					// 	vendorID:  vid,
+					// },
 					serialID,
 				)
 			} else {

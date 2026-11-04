@@ -2,13 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"sync"
 )
 
 // список плат, которые распознаются загрузчиком, но не могут быть прошиты
 var notSupportedBoards = []string{""}
 
-type PidVidType struct {
+type VidPid struct {
 	ProductID string `json:"productID"`
 	VendorID  string `json:"vendorID"`
 }
@@ -21,11 +22,12 @@ type ArduinoPayload struct {
 
 type BoardTemplate struct {
 	ID                 int             `json:"ID"`
-	PidVid             []PidVidType    `json:"pidvid"`
+	PidVid             []VidPid    	   `json:"pidvid"`
 	Name               string          `json:"name"`
 	Type               string          `json:"type"`
 	TypePayload        json.RawMessage `json:"typePayload"`
 	FlashFileExtension string          `json:"flashFileExtension"`
+	NoSerial           bool            `json:"noSerial"`
 }
 
 type Board interface {
@@ -60,6 +62,21 @@ func newDevice(typeDesc BoardTemplate, board Board) *Device {
 	return &device
 }
 
+func matchTemplate(boardTemplates []BoardTemplate, vidpid VidPid) *BoardTemplate {
+	for _, boardTemplate := range boardTemplates {
+		vid := ""
+		pid := ""
+		for _, pidvid := range boardTemplate.PidVid {
+			vid = pidvid.VendorID
+			pid = pidvid.ProductID
+			if strings.EqualFold(vidpid.VendorID, vid) && strings.EqualFold(vidpid.ProductID, pid) {
+				return &boardTemplate
+			}
+		}
+	}
+	return nil
+}
+
 func (temp *BoardTemplate) IsMSDevice() bool {
 	return temp.Type == "tjc-ms"
 }
@@ -70,30 +87,6 @@ func (temp *BoardTemplate) IsArduinoDevice() bool {
 
 func (temp *BoardTemplate) IsBlgMbDevice() bool {
 	return temp.Type == "blg-mb"
-}
-
-// находит шаблон платы по его id
-func findTemplateByID(boardID int) *BoardTemplate {
-	var template BoardTemplate
-	if boardID < len(detector.boardTemplates) {
-		template = detector.boardTemplates[boardID]
-		// ожидается, что в файле с шаблонами прошивок (device_list.JSON) нумеровка индексов будет идти по порядку, но если это не так, то придётся перебать все шаблоны
-		if template.ID != boardID {
-			foundCorrectBootloader := false
-			for _, templ := range detector.boardTemplates {
-				if templ.ID == boardID {
-					template = templ
-					foundCorrectBootloader = true
-					break
-				}
-			}
-			if foundCorrectBootloader {
-				printLog("Не найден шаблон для устройства")
-				return nil
-			}
-		}
-	}
-	return &template
 }
 
 // true = устройство заблокировано для прошивки

@@ -6,8 +6,6 @@ import (
 	"log"
 	"time"
 	"os"
-
-"runtime/debug"
 )
 
 // адрес на котором будет работать этот сервер
@@ -91,19 +89,6 @@ func setArgs() {
 	disconnectGraceSeconds := flag.Int("deviceDisconnectGrace", 1, "время (в секундах), в течение которого временно исчезнувшее USB-устройство не удаляется из списка; 0 отключает задержку")
 	flag.BoolVar(&showVersion, "version", false, "Показать последний коммит")
 	flag.Parse()
-
-var Commit = func() string {
-    if info, ok := debug.ReadBuildInfo(); ok {
-        for _, setting := range info.Settings {
-            if setting.Key == "vcs.revision" {
-                return setting.Value
-            }
-        }
-    }
-
-    return ""
-}()
-
 
 	if showVersion {
 		fmt.Printf("Последний коммит: %s\n", Commit)

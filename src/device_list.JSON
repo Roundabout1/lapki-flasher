@@ -129,6 +129,7 @@
       }
     ],
     "type": "blg-mb",
+    "noSerial": true,
     "flashFileExtension": "bin"
   }
 ]

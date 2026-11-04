@@ -16,7 +16,7 @@ type Arduino struct {
 	ardOS        ArduinoOS // структура с данными для поиска устройства на определённой ОС
 }
 
-func NewArduinoFromTemp(temp BoardTemplate, portName string, ardOS ArduinoOS, serialID string) *Arduino {
+func NewArduinoFromTemp(temp BoardTemplate, portName string, serialID string) *Arduino {
 	var arduinoPayload ArduinoPayload
 	err := json.Unmarshal(temp.TypePayload, &arduinoPayload)
 	if err != nil {
@@ -27,7 +27,6 @@ func NewArduinoFromTemp(temp BoardTemplate, portName string, ardOS ArduinoOS, se
 			bootloaderID: -1,
 			serialID:     serialID,
 			portName:     portName,
-			ardOS:        ardOS,
 		}
 	}
 	return &Arduino{
@@ -36,7 +35,6 @@ func NewArduinoFromTemp(temp BoardTemplate, portName string, ardOS ArduinoOS, se
 		bootloaderID: arduinoPayload.BootloaderID,
 		serialID:     serialID,
 		portName:     portName,
-		ardOS:        ardOS,
 	}
 }
 
