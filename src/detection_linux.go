@@ -111,9 +111,6 @@ func detectBoards(boardTemplates []BoardTemplate) map[string]*Device {
 						ports[2],
 						ports[3],
 					},
-					MS1OS{
-						deviceID: id,
-					},
 				)
 			} else if boardTemplate.IsArduinoDevice() {
 				board = NewArduinoFromTemp(

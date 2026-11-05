@@ -42,12 +42,11 @@ var ms1Type = map[string]string{
 	"9cd7735665c44c15": "ard-a1",
 }
 
-func NewMS1(portNames [4]string, ms1OS MS1OS) *MS1 {
+func NewMS1(portNames [4]string) *MS1 {
 	ms1 := MS1{
 		portNames: portNames,
 		address:   "",
 		verify:    false,
-		ms1OS:     ms1OS,
 	}
 	return &ms1
 }
