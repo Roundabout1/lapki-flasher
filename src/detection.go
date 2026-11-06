@@ -40,6 +40,12 @@ type Detector struct {
 	boardActions *list.List
 }
 
+type ParsedPort struct {
+	prefix          string
+	number          int
+	originalPortPtr *enumerator.PortDetails
+}
+
 func NewDetector() *Detector {
 	var d Detector
 	d.boards = make(map[string]*Device)
@@ -111,29 +117,7 @@ func (d *Detector) Update() (
 
 	}()
 
-	/*
-	 * Нужно отсортировать порты мс-тюк
-	 * мс-тюк имеет 4 порта
-	 * они идут последовательно на unix-подобных системах
-	 * нужно собрать все порты мс-тюк в слайс
-	 * затем отсортировать их в порядке возрастания
-	 * затем поделить их на группы по 4 мс-тюк в группе
-	 * одна группа последовательных портов = 1 мс-тюк
-	 * если кол-во портов мс-тюк не кратно 4, то что-то пошла не так, это ошибка
-	 * имена портов - это строки, однако порты должны идти последовательно согласно их номерам
-	 * обычно название порта имеет следующий вид ttyN, где N - это число, tty - это префикс, может принимать другое название
-	 * следовательно названия портов следует сортировать как структуру, состоящую из двух элементов: prefix и number, приоритет по prefix, второй приоритет по number
-	 * если number отсутствует, то считать его за ноль
-	 * все 4 порта мс-тюк должны иметь одинаковый префикс, я так предпологаю...
-	 */
-
 	func() {
-
-		type UnixPort struct {
-			prefix string
-			number int
-			originalPortPtr *enumerator.PortDetails
-		}
 
 		ports, err := enumerator.GetDetailedPortsList()
 		if err != nil {
@@ -141,7 +125,7 @@ func (d *Detector) Update() (
 			return
 		}
 
-		msUnixPorts := make([]UnixPort, 0, len(ports))
+		msPorts := make([]ParsedPort, 0, len(ports))
 
 		for _, port := range ports {
 			printLog("Found port:", port.Name)
@@ -175,9 +159,9 @@ func (d *Detector) Update() (
 					}
 					numberPartStartIndex = i
 				}
-				unixport := UnixPort{
+				unixport := ParsedPort{
 					originalPortPtr: port,
-					prefix: string(portName[:numberPartStartIndex]),
+					prefix:          string(portName[:numberPartStartIndex]),
 					number: func() int {
 						if numberPartStartIndex == len(portName) {
 							printLog("the port doesn't have number ending", portName)
@@ -191,7 +175,7 @@ func (d *Detector) Update() (
 						return res
 					}(),
 				}
-				msUnixPorts = append(msUnixPorts, unixport)
+				msPorts = append(msPorts, unixport)
 				// сборка портов МС-ТЮК происходит после окончания цикла
 				continue
 			} else if boardTemplate.IsArduinoDevice() {
@@ -218,21 +202,10 @@ func (d *Detector) Update() (
 		}
 
 		// нет смысла, исполнять дальнейший код, если МС-ТЮК отсутствует
-		if len(msUnixPorts) == 0 {
+		if len(msPorts) == 0 {
 			return
 		}
-
-		// один МС-ТЮК = 4 "рядом стоящих" порта
-		sort.Slice(msUnixPorts, func(i, j int) bool {
-			port1 := msUnixPorts[i]
-			port2 := msUnixPorts[j]
-			if port1.prefix != port2.prefix {
-				return port1.prefix < port2.prefix
-			}
-			return port1.number < port2.number
-		})
-		// сборка МС-ТЮК
-		if len(msUnixPorts)%4 != 0 {
+		if len(msPorts)%4 != 0 {
 			log.Printf("something went wrong after gathering together ms1 ports: the number of these ports isn't dividable by 4")
 			return
 		}
@@ -248,18 +221,32 @@ func (d *Detector) Update() (
 			log.Printf("can't find ms1 template")
 			return
 		}
-		for i := 0; i < len(msUnixPorts); i += 4 {
-			port := msUnixPorts[i]
+
+		// один МС-ТЮК = 4 "рядом стоящих" порта
+		sort.Slice(msPorts, func(i, j int) bool {
+			port1 := msPorts[i]
+			port2 := msPorts[j]
+			if port1.prefix != port2.prefix {
+				return port1.prefix < port2.prefix
+			}
+			return port1.number < port2.number
+		})
+		// на некоторых ОС (на данный момент только на Windows),
+		// требуется отсортировать каждую группу из 4 портов ещё раз, чтобы определить первый и последний порты
+		sortMsPorts(msPorts)
+		// сборка МС-ТЮК
+		for i := 0; i < len(msPorts); i += 4 {
+			port := msPorts[i]
 
 			portNames := func() [4]string {
 				var res [4]string
-				for i, v := range msUnixPorts {
+				for i, v := range msPorts {
 					res[i] = v.originalPortPtr.Name
 				}
 				return res
 			}()
 
-			detectedBoards["ms1" + port.originalPortPtr.Name] = newDevice(*msTemplate, NewMS1(portNames))
+			detectedBoards["ms1"+port.originalPortPtr.Name] = newDevice(*msTemplate, NewMS1(portNames))
 			printLog("found ms1-device", port.originalPortPtr.Name)
 		}
 	}()

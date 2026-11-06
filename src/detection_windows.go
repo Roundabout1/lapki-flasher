@@ -164,121 +164,13 @@ func getDevs(serviceName string) []string {
 }
 
 // находит все подключённые платы
-func detectBoards(boardTemplates []BoardTemplate) map[string]*Device {
-	//startTime := time.Now()
-	devs := make(map[string]*Device)
-	presentUSBDevices := append(getInstanceId(""), append(getDevs("libusb0"), getDevs("WINUSB")...)...)
-	// нет usb-устройств
-	if presentUSBDevices == nil {
-		return nil
-	}
-	// структура для хранения одной части МС-ТЮК, которую удалось найти
-	type ms1Part struct {
-		template     *BoardTemplate
-		portName     string
-		pathToDevice string
-		// части МС-ТЮК имеют имена, которые сожержат слова SerialA, SerialB, SerialC, SerialD,
-		// порядок портов в МС-ТЮК должен соответствовать алфавитному порядку этих слов
-		friendlyName string
-	}
-	// все части МС-ТЮК, которые удалось найти, используется для того, чтобы "собрать" из них полноценные МС-ТЮКи
-	var ms1parts []ms1Part
-	for _, line := range presentUSBDevices {
-		device := strings.TrimSpace(line)
-		deviceLen := len(device)
-		for _, boardTemplate := range boardTemplates {
-			for _, pidvid := range boardTemplate.PidVid {
-				vendorID := pidvid.VendorID
-				productID := pidvid.ProductID
-				pathPattern := fmt.Sprintf("USB\\VID_%s&PID_%s", vendorID, productID)
-				pathLen := len(pathPattern)
-				// нашли подходящее устройство
-				if pathLen <= deviceLen && strings.EqualFold(device[:pathLen], pathPattern) {
-					portName := findPortName(&device)
-					if portName == NOT_FOUND {
-						printLog("WARNING: No port for device:", device)
-					}
-					if boardTemplate.IsMSDevice() {
-						// сбор МС-ТЮК "по-частям"
-
-						// поиск "FriendlyName"
-
-						keyPath := fmt.Sprintf("SYSTEM\\CurrentControlSet\\Enum\\%s", device)
-						key, err := registry.OpenKey(registry.LOCAL_MACHINE, keyPath, registry.QUERY_VALUE)
-						if err != nil {
-							printLog("can't open key for ms1-device.", err.Error())
-							continue
-						}
-						friendlyName, _, err := key.GetStringValue("FriendlyName")
-						if err != nil {
-							printLog("can't get FriendlyName property for ms1-device.", err.Error())
-							key.Close()
-							continue
-						}
-						key.Close()
-						ms1parts = append(ms1parts, ms1Part{
-							template:     &boardTemplate,
-							portName:     portName,
-							pathToDevice: device,
-							friendlyName: friendlyName,
-						})
-					} else {
-						// поиск серийного номера
-						serialIndex := strings.LastIndex(device, "\\")
-						possibleSerialID := device[serialIndex+1:]
-						if strings.Contains(possibleSerialID, "&") {
-							possibleSerialID = ""
-						}
-						if boardTemplate.IsArduinoDevice() {
-							detectedBoard := NewArduinoFromTemp(boardTemplate, portName, ArduinoOS{pathToDevice: device}, possibleSerialID)
-							devs[device] = newDevice(boardTemplate, detectedBoard)
-							printLog("Arduino device was found:", detectedBoard, device)
-						} else if boardTemplate.IsBlgMbDevice() {
-							devs[device] = newDevice(boardTemplate, &BlgMb{serialID: possibleSerialID})
-							printLog("CyberBear device was found:", device)
-						} else {
-							//TODO
-							printLog("no searching algorithm for this type of device!", boardTemplate.Type)
-						}
-					}
-				}
-			}
-		}
-	}
-	// windows распознает один МС-ТЮК как 4 разных устройства, поэтому их нужно "объединить" в одно устройство для загрузчика
-	sort.Slice(ms1parts, func(i, j int) bool {
-		port1 := ms1parts[i].portName
-		port2 := ms1parts[j].portName
-		len1 := len(port1)
-		len2 := len(port2)
-		if len1 == len2 {
-			return port1 < port2
-		}
-		return len1 < len2
-	})
-	msPartsNum := len(ms1parts)
-	if msPartsNum%4 != 0 {
-		log.Println("Incorrect number of ms1 parts! Can't identify them")
-		return devs
-	}
-	for msPart := 0; msPart < msPartsNum; msPart += 4 {
-		pack := ms1parts[msPart : msPart+4]
+func sortMsPorts(msPorts []ParsedPort) {
+	for msPart := 0; msPart < len(msPorts); msPart += 4 {
+		pack := msPorts[msPart : msPart+4]
 		sort.Slice(pack, func(i, j int) bool {
-			return pack[i].friendlyName < pack[j].friendlyName
+			return pack[i].originalPortPtr.Product < pack[j].originalPortPtr.Product
 		})
-		var portNames [4]string
-		var pathesToDevices [4]string
-		for i := range 4 {
-			portNames[i] = pack[i].portName
-			pathesToDevices[i] = pack[i].pathToDevice
-		}
-		ms1 := NewMS1(portNames, MS1OS{pathesToDevices: pathesToDevices})
-		devs[pack[0].pathToDevice] = newDevice(*pack[0].template, ms1)
 	}
-	//endTime := time.Now()
-	//printLog("Detection time: ", endTime.Sub(startTime))
-	printLog(devs)
-	return devs
 }
 
 /*
