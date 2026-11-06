@@ -3,8 +3,11 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"os/exec"
 	"time"
+
+	"go.bug.st/serial/enumerator"
 )
 
 type Arduino struct {
@@ -13,7 +16,7 @@ type Arduino struct {
 	serialID     string
 	portName     string
 	bootloaderID int
-	ardOS        ArduinoOS // структура с данными для поиска устройства на определённой ОС
+	vidpid       VidPid
 }
 
 func NewArduinoFromTemp(temp BoardTemplate, portName string, serialID string) *Arduino {
@@ -45,7 +48,6 @@ func CopyArduino(board *Arduino) *Arduino {
 		bootloaderID: board.bootloaderID,
 		serialID:     board.serialID,
 		portName:     board.portName,
-		ardOS:        board.ardOS,
 	}
 }
 
@@ -84,7 +86,7 @@ func (board *Arduino) flashBootloader(filePath string, logger chan any) (string,
 	defer time.Sleep(500 * time.Millisecond)
 	var notAddedDevices map[string]*Device
 	found := false
-	for i := 0; i < 25; i++ {
+	for i := range 25 {
 		// TODO: возможно стоит добавить количество необходимого времени в параметры сервера
 		time.Sleep(500 * time.Millisecond)
 		printLog("Попытка найти подходящее устройство", i+1)
@@ -149,4 +151,46 @@ func (board *Arduino) Reset() error {
 
 func (board *Arduino) GetMetaData() (any, error) {
 	return "", errors.New("операция получения метаданных недоступна для этого устройства")
+}
+
+func (board *Arduino) Update() bool {
+	ports, err := enumerator.GetDetailedPortsList()
+	if err != nil {
+		log.Printf("error during arduino port update: %v\n", err)
+		board.portName = NOT_FOUND
+		return true
+	}
+
+	hasFound := func() bool {
+		for _, port := range ports {
+			if !port.IsUSB {
+				continue
+			}
+			if board.serialID == port.SerialNumber && board.portName == port.Name && board.vidpid.VendorID == port.VID && board.vidpid.ProductID == port.PID {
+				return true
+			}
+		}
+		return false
+	}
+	if hasFound() {
+		return false
+	}
+	if !board.hasSerial() {
+		board.portName = NOT_FOUND
+		return true
+	}
+
+	board.portName = func()(string){
+		for _, port := range ports {
+			if !port.IsUSB {
+				continue
+			}
+			if board.serialID == port.SerialNumber && board.vidpid.ProductID == port.PID && board.vidpid.VendorID == port.VID {
+				return port.Name
+			}
+
+		}
+		return NOT_FOUND
+	}()
+	return true
 }

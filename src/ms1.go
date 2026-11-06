@@ -4,15 +4,17 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"log"
 
 	"github.com/polyus-nt/ms1-go/pkg/ms1"
+	"go.bug.st/serial/enumerator"
 )
 
 type MS1 struct {
 	portNames [4]string // должно быть ровно 4 порта
 	address   string
-	verify    bool  // если true, то будет проверка после прошивки
-	ms1OS     MS1OS // структура с данными для поиска устройства на определённой ОС
+	verify    bool // если true, то будет проверка после прошивки
+	vidpid    VidPid
 }
 
 var ms1backtrackStatus = map[ms1.UploadStage]string{
@@ -344,4 +346,30 @@ func (board *MS1) getConnectedBoards(addresses []string, client *WebSocketConnec
 		connectedBoards = append(connectedBoards, address)
 	}
 	return connectedBoards, nil
+}
+
+func (board *MS1) Update() bool {
+	ports, err := enumerator.GetDetailedPortsList()
+	if err != nil {
+		log.Printf("error during ms port update: %v\n", err)
+		board.portNames[0] = NOT_FOUND
+		return true
+	}
+
+	for _, curPortName := range board.portNames {
+		hasMatch := false
+		for _, foundPort := range ports {
+			if curPortName == foundPort.Name && board.vidpid.ProductID == foundPort.PID && board.vidpid.VendorID == foundPort.VID {
+				hasMatch = true
+				break
+			}
+		}
+		if !hasMatch {
+			board.portNames[0] = NOT_FOUND
+			return true
+		}
+
+	}
+
+	return false
 }

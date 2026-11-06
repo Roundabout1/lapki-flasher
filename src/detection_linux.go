@@ -1,34 +1,11 @@
-//go:build linux
-
 package main
 
 import (
-	"fmt"
-	"io/fs"
 	stdlog "log"
-	"os"
 	"os/exec"
-	"strconv"
 	"strings"
-
 	log "github.com/sirupsen/logrus"
-
-	"github.com/google/gousb"
 )
-
-type ArduinoOS struct {
-	deviceID  string
-	productID string
-	vendorID  string
-}
-
-type MS1OS struct {
-	deviceID string
-}
-
-const DEV = "/dev"
-const ID_SERIAL = "ID_SERIAL_SHORT"
-const USEC_INITIALIZED = "USEC_INITIALIZED"
 
 // настройка для выбранной ОС
 func setupOS() {
@@ -52,102 +29,6 @@ func (LogrusWriter) Write(data []byte) (int, error) {
 	return len(data), nil
 }
 
-
-func hasFound(ID string, isSerial bool, portName string) bool {
-	var properties []string
-	var err error
-	if isSerial {
-		properties, err = findProperty(portName, ID_SERIAL)
-	} else {
-		properties, err = findProperty(portName, USEC_INITIALIZED)
-	}
-	if err == nil && properties[0] == ID {
-		return true
-	}
-	return false
-}
-
-/*
-Возвращает порты устройства, возвращает nil, если ничего не удалось найти.
-
-Для arduino-подобных устройств должен вернуть один порт, для МС-ТЮК - четыре порта.
-*/
-func findPortName(desc *gousb.DeviceDesc) []string {
-	// <bus>-<port[.port[.port]]>:<config>.<interface> - шаблон папки в которой должен находиться путь к папке tty
-
-	ports := strconv.Itoa(desc.Path[0])
-	num_ports := len(desc.Path)
-	for i := 1; i < num_ports; i++ {
-		ports += "." + strconv.Itoa(desc.Path[i])
-	}
-
-	// рекурсивно проходимся по возможным config и interface до тех пор пока не найдём tty папку
-	dir_prefix := "/sys/bus/usb/devices"
-	tty := "tty"
-	var portNames []string
-	for _, conf := range desc.Configs {
-		for _, inter := range conf.Interfaces {
-			root := fmt.Sprintf("%s/%d-%s:%d.%d", dir_prefix, desc.Bus, ports, conf.Number, inter.Number)
-			fileSystem := os.DirFS(root)
-			var devicePath string
-			fs.WalkDir(fileSystem, ".", func(path string, d fs.DirEntry, err error) error {
-				if d.Name() == tty {
-					// использование Readdirnames вместо ReadDir может ускорить работу в 20 раз
-					dirs, err := os.ReadDir(root + "/" + path)
-					if err != nil {
-						return err
-					}
-					if len(dirs) < 1 {
-						return nil
-					}
-					devicePath = fmt.Sprintf("%s/%s", DEV, dirs[0].Name())
-					return fs.SkipAll
-				}
-				return nil
-			})
-			if devicePath != NOT_FOUND {
-				portNames = append(portNames, devicePath)
-			}
-		}
-	}
-	return portNames
-}
-
-// возвращает значение указанных параметров устройства, подключённого к порту portName,
-// можно использовать для того, чтобы получить серийный номер устройства (если есть) или для получения времени, когда устройство было подключено (используется как ID)
-//
-//	см. "udevadm info --query=propery" для большей информации об параметрах
-func findProperty(portName string, properties ...string) ([]string, error) {
-	numProperties := len(properties)
-	if numProperties == 0 {
-		return nil, nil
-	}
-	cmd := exec.Command("udevadm", "info", "--query=property", "--name="+portName)
-	stdout, err := cmd.CombinedOutput()
-	if err != nil {
-		printLog(string(stdout), err.Error())
-		return nil, err
-	}
-	lines := strings.Split(string(stdout), "\n")
-	var answers = make([]string, numProperties)
-	for _, line := range lines {
-		lineSize := len(line)
-		for i, property := range properties {
-			if answers[i] != "" {
-				continue
-			}
-			propertySize := len(property)
-			if propertySize > lineSize {
-				continue
-			}
-			if line[:propertySize] == property {
-				answers[i] = line[propertySize+1:]
-			}
-		}
-	}
-	return answers, nil
-}
-
 // перезагрузка порта
 func rebootPort(portName string) (err error) {
 	// stty 115200 -F /dev/ttyUSB0 raw -echo
@@ -157,44 +38,4 @@ func rebootPort(portName string) (err error) {
 		printLog(cmd.Args, err)
 	}
 	return err
-}
-
-func (board *Arduino) Update() bool {
-	if hasFound(board.ardOS.deviceID, board.hasSerial(), board.portName) {
-		return false
-	}
-	board.portName = NOT_FOUND
-	if !board.hasSerial() {
-		return true
-	}
-	ctx := gousb.NewContext()
-	defer ctx.Close()
-	var portName string
-	ctx.OpenDevices(func(desc *gousb.DeviceDesc) bool {
-		if desc.Product.String() == board.ardOS.productID && desc.Vendor.String() == board.ardOS.vendorID {
-			portNames := findPortName(desc)
-			portsNum := len(portNames)
-			if portsNum == 0 || portsNum > 1 {
-				printLog("number of ports is not equal to 1", portsNum)
-			} else {
-				properties, _ := findProperty(portNames[0], ID_SERIAL)
-				printLog("prop", properties)
-				if properties[0] == board.serialID {
-					portName = portNames[0]
-					return false
-				}
-			}
-		}
-		return false
-	})
-	board.portName = portName
-	return true
-}
-
-func (board *MS1) Update() bool {
-	if !hasFound(board.ms1OS.deviceID, false, board.portNames[0]) {
-		board.portNames[0] = NOT_FOUND
-		return true
-	}
-	return false
 }
