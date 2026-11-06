@@ -19,7 +19,7 @@ type Arduino struct {
 	vidpid       VidPid
 }
 
-func NewArduinoFromTemp(temp BoardTemplate, portName string, serialID string) *Arduino {
+func NewArduinoFromTemp(temp BoardTemplate, portName string, serialID string, vidpid VidPid) *Arduino {
 	var arduinoPayload ArduinoPayload
 	err := json.Unmarshal(temp.TypePayload, &arduinoPayload)
 	if err != nil {
@@ -30,6 +30,7 @@ func NewArduinoFromTemp(temp BoardTemplate, portName string, serialID string) *A
 			bootloaderID: -1,
 			serialID:     serialID,
 			portName:     portName,
+			vidpid: vidpid,
 		}
 	}
 	return &Arduino{
@@ -38,6 +39,7 @@ func NewArduinoFromTemp(temp BoardTemplate, portName string, serialID string) *A
 		bootloaderID: arduinoPayload.BootloaderID,
 		serialID:     serialID,
 		portName:     portName,
+		vidpid: vidpid,
 	}
 }
 

@@ -183,6 +183,7 @@ func (d *Detector) Update() (
 					*boardTemplate,
 					port.Name,
 					port.SerialNumber,
+					vidpid,
 				)
 			} else {
 				log.Printf("no searching algorithm for this type of device: %v\n", boardTemplate.Type)
@@ -246,7 +247,15 @@ func (d *Detector) Update() (
 				return res
 			}()
 
-			detectedBoards["ms1"+port.originalPortPtr.Name] = newDevice(*msTemplate, NewMS1(portNames))
+			detectedBoards["ms1"+port.originalPortPtr.Name] = newDevice(
+				*msTemplate,
+				&MS1{
+					portNames: portNames,
+					address:   "",
+					verify:    false,
+					vidpid:    VidPid{port.originalPortPtr.VID, port.originalPortPtr.PID},
+				},
+			)
 			printLog("found ms1-device", port.originalPortPtr.Name)
 		}
 	}()
